@@ -1,7 +1,8 @@
-FROM espressif/idf:v4.3.1
+FROM python:alpine3.15
 
-RUN apt-get update && apt-get upgrade -y
-RUN apt-get install udev -y
+ARG IDF_CLONE_URL=https://github.com/espressif/esp-idf.git
+ARG IDF_CLONE_BRANCH_OR_TAG=master
+ARG IDF_CHECKOUT_REF=v4.3.1
 
 ARG ADF_CLONE_URL=https://github.com/espressif/esp-adf.git
 ARG ADF_CLONE_BRANCH_OR_TAG=master
@@ -10,6 +11,57 @@ ARG ADF_CHECKOUT_REF=v2.3
 ENV IDF_PATH=/opt/esp/idf
 ENV IDF_TOOLS_PATH=/opt/esp
 ENV ADF_PATH=/opt/esp/adf
+
+RUN apk add \
+    bash \
+    udev \
+    bison \
+    ca-certificates \
+    ccache \
+    check \
+    curl \
+    flex \
+    git \
+    gperf \
+    gcc \
+    gcompat \
+    libffi-dev \
+    libusb \
+    musl-dev \
+    make \
+    ninja \
+    unzip \
+    wget \
+    xz \
+    zip \
+    && apk fix
+    # xz-utils \
+    # libpython2.7 \
+    # python3 \
+    # python3-pip \
+    # ninja-build \
+    # lcov \
+    # libncurses-dev \
+    # libusb-1.0-0-dev \
+RUN python -m pip install --upgrade pip virtualenv
+
+RUN git clone\
+      ${IDF_CLONE_BRANCH_OR_TAG:+-b $IDF_CLONE_BRANCH_OR_TAG} \
+      $IDF_CLONE_URL $IDF_PATH
+
+RUN if [ -n "$IDF_CHECKOUT_REF" ]; then \
+      cd $IDF_PATH && \
+      git checkout $IDF_CHECKOUT_REF;\
+    fi
+RUN cd $IDF_PATH && git submodule update --init --recursive
+
+# Install all the required tools, plus CMake
+RUN $IDF_PATH/tools/idf_tools.py --non-interactive install required \
+  && $IDF_PATH/tools/idf_tools.py --non-interactive install cmake \
+  && $IDF_PATH/tools/idf_tools.py --non-interactive install-python-env \
+  && rm -rf $IDF_TOOLS_PATH/dist
+
+RUN $IDF_PATH/install.sh
 
 RUN git clone\
       ${ADF_CLONE_BRANCH_OR_TAG:+-b $ADF_CLONE_BRANCH_OR_TAG} \
@@ -25,32 +77,14 @@ RUN cd $ADF_PATH && git submodule update --init --recursive
 ENV IDF_CCACHE_ENABLE=1
 ENV LC_ALL=C.UTF-8
 
+COPY entrypoint.sh /opt/esp/entrypoint.sh
+
+RUN chmod a+x /opt/esp/*.sh && \
+    chmod a+x /opt/esp/idf/*.sh
+
+# Apply ESP-ADF sdcard lib bug
 COPY ./sdcard.c /opt/esp/adf/components/esp_peripherals/lib/sdcard/sdcard.c
 
-# QEMU for ESP32
-# RUN apt-get update && apt-get install git libglib2.0-dev libfdt-dev libpixman-1-dev zlib1g-dev libgcrypt20-dev -y
-
-# ARG QEMU_CLONE_URL=https://github.com/espressif/qemu
-# ENV QEMU_PATH=/opt/qemu
-
-# RUN git clone $QEMU_CLONE_URL $QEMU_PATH
-# Configure & Build
-# RUN cd $QEMU_PATH &&\
-    # ./configure --target-list=xtensa-softmmu \
-    # --enable-gcrypt \
-    # --enable-debug --enable-sanitizers \
-    # --disable-strip --disable-user \
-    # --disable-capstone --disable-vnc \
-    # --disable-sdl --disable-gtk &&\
-    # ninja -C build
-
-# Copy bin files to PATH
-# RUN cp $QEMU_PATH/build/qemu-system-xtensa /usr/local/bin/
-# RUN cp $QEMU_PATH/build/qemu-img /usr/local/bin/
-# RUN cp $QEMU_PATH/build/qemu-edid /usr/local/bin/
-
-RUN apt-get clean -y && \
-    apt-get autoremove --purge -y && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
-
 RUN echo "source /opt/esp/idf/export.sh" >> /root/.bashrc
+ENTRYPOINT [ "/opt/esp/entrypoint.sh" ]
+CMD [ "/bin/bash" ]
